@@ -11,7 +11,7 @@ const copy = {
     results: "Rezultati", scoring: "Unos rezultata", presented: "Lagoda Disc Golf predstavlja",
     intro: "Četiri igrača. Jedan disk u igri. Šesnaest staza za savršenu timsku taktiku.",
     follow: "Prati rezultate", flightLogin: "Prijava flighta", format: "FORMAT TURNIRA",
-    formatLine: "4 igrača · 16 staza · sve par 3", teamsPerFlight: "ekipe po flightu", rounds: "runde",
+    formatLine: "4 igrača · 16 staza", teamScore: "ekipni rezultat", rounds: "runde",
     live: "UŽIVO", autoRefresh: "Automatsko osvježavanje", team: "Ekipa", total: "Ukupno",
     empty: "Rezultati će se pojaviti nakon prvog unosa.", admin: "Administracija", language: "Jezik",
   },
@@ -19,7 +19,7 @@ const copy = {
     results: "Results", scoring: "Enter scores", presented: "Lagoda Disc Golf presents",
     intro: "Four players. One disc in play. Sixteen holes for the perfect team strategy.",
     follow: "Follow results", flightLogin: "Flight login", format: "TOURNAMENT FORMAT",
-    formatLine: "4 players · 16 holes · all par 3", teamsPerFlight: "teams per flight", rounds: "rounds",
+    formatLine: "4 players · 16 holes", teamScore: "team score", rounds: "rounds",
     live: "LIVE", autoRefresh: "Refreshes automatically", team: "Team", total: "Total",
     empty: "Results will appear after the first score is entered.", admin: "Administration", language: "Language",
   },
@@ -45,7 +45,7 @@ export default function HomeClient({ leaderboard }: { leaderboard: LeaderTeam[] 
 
     <section className="hero"><div className="shell heroGrid">
       <div><span className="eyebrow">{t.presented}</span><h1>Lagoda Team<br/><em>Showdown 2026</em></h1><p>{t.intro}</p><div className="heroActions"><Link href="#rezultati" className="btn">{t.follow} <ArrowRight size={18}/></Link><Link href="/scoring" className="textLink">{t.flightLogin}</Link></div></div>
-      <div className="scoreCard"><div className="cardTop"><span>{t.format}</span><Target/></div><strong>4 × 16</strong><p>{t.formatLine}</p><div className="miniStats"><div><Users/><b>2</b><span>{t.teamsPerFlight}</span></div><div><Trophy/><b>3</b><span>{t.rounds}</span></div></div></div>
+      <div className="scoreCard"><div className="cardTop"><span>{t.format}</span><Target/></div><strong>4 × 16</strong><p>{t.formatLine}</p><div className="miniStats"><div><Users/><b>1</b><span>{t.teamScore}</span></div><div><Trophy/><b>3</b><span>{t.rounds}</span></div></div></div>
     </div></section>
 
     <section id="rezultati" className="shell section">
