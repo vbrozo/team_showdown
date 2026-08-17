@@ -5,7 +5,7 @@ Web aplikacija za javni leaderboard, administraciju ekipa i flightova te mobilni
 ## Pokretanje
 
 1. Napravite Supabase projekt.
-2. U Supabase SQL Editoru pokrenite `supabase/migrations/001_initial.sql`.
+2. U Supabase SQL Editoru redom pokrenite sve datoteke iz `supabase/migrations`.
 3. Kopirajte `.env.example` u `.env.local` i unesite vrijednosti.
 4. Pokrenite `npm install` i `npm run dev`.
 
