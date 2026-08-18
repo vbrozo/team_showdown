@@ -1,41 +1,49 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { Check, ChevronLeft, ChevronRight, Wifi } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Wifi, WifiOff } from "lucide-react";
 
 type Score={team_id:string,hole_no:number,strokes:number,opener_id:string};
 type FlightData={flight:{id:string,name:string,round_no:number,start_hole:number},teams:{id:string,name:string,players:{id:string,name:string}[]}[],scores:Score[],holes:{number:number,par:number}[]};
 type Draft={openerId:string,strokes:number};
+type PendingScore={teamId:string,hole:number,openerId:string,strokes:number};
 
 export default function ScoringApp(){
-  const [code,setCode]=useState(""),[data,setData]=useState<FlightData|null>(null),[hole,setHole]=useState(1),[msg,setMsg]=useState(""),[drafts,setDrafts]=useState<Record<string,Draft>>({}),[saving,setSaving]=useState(false);
+  const [code,setCode]=useState(""),[data,setData]=useState<FlightData|null>(null),[hole,setHole]=useState(1),[msg,setMsg]=useState(""),[drafts,setDrafts]=useState<Record<string,Draft>>({}),[saving,setSaving]=useState(false),[online,setOnline]=useState(true),[pendingCount,setPendingCount]=useState(0);
+  const syncing=useRef(false),syncLatest=useRef<()=>void>(()=>{});
   const key=(teamId:string,holeNo:number)=>`${teamId}:${holeNo}`;
+  const storageKey=(flightId:string)=>`lts-offline-scores:${flightId}`;
 
-  async function login(e:React.FormEvent){e.preventDefault();const r=await fetch("/api/scoring",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"login",code})});if(r.ok){const d=await r.json();setData(d);setHole(d.flight.start_hole)}else setMsg("Šifra nije ispravna ili runda nije aktivna.")}
-  function updateDraft(teamId:string,value:Draft){setDrafts(current=>({...current,[key(teamId,hole)]:value}))}
+  function readPending(flightId:string):PendingScore[]{try{const value=JSON.parse(localStorage.getItem(storageKey(flightId))||"[]");return Array.isArray(value)?value:[]}catch{return []}}
+  function writePending(flightId:string,scores:PendingScore[]){const current=readPending(flightId);for(const score of scores){const index=current.findIndex(item=>item.teamId===score.teamId&&item.hole===score.hole);if(index>=0)current[index]=score;else current.push(score)}localStorage.setItem(storageKey(flightId),JSON.stringify(current));setPendingCount(current.length)}
+  function clearConfirmed(flightId:string,sent:PendingScore[]){const current=readPending(flightId).filter(item=>!sent.some(saved=>saved.teamId===item.teamId&&saved.hole===item.hole&&saved.openerId===item.openerId&&saved.strokes===item.strokes));if(current.length)localStorage.setItem(storageKey(flightId),JSON.stringify(current));else localStorage.removeItem(storageKey(flightId));setPendingCount(current.length)}
+
+  useEffect(()=>{setOnline(navigator.onLine);const connected=()=>{setOnline(true);syncLatest.current()},disconnected=()=>setOnline(false);window.addEventListener("online",connected);window.addEventListener("offline",disconnected);return()=>{window.removeEventListener("online",connected);window.removeEventListener("offline",disconnected)}},[]);
+
+  async function login(e:React.FormEvent){e.preventDefault();try{const r=await fetch("/api/scoring",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"login",code})});if(r.ok){const d:FlightData=await r.json(),pending=readPending(d.flight.id),restored:Record<string,Draft>={};pending.forEach(score=>{restored[key(score.teamId,score.hole)]={openerId:score.openerId,strokes:score.strokes}});setDrafts(restored);setPendingCount(pending.length);setData(d);setHole(d.flight.start_hole);setTimeout(()=>syncPending("Lokalno spremljeni rezultati su sinkronizirani.",d),0)}else setMsg("Šifra nije ispravna ili runda nije aktivna.")}catch{setMsg("Za otvaranje scorecarda prvi put potrebna je internetska veza.")}}
+  function updateDraft(teamId:string,value:Draft){setDrafts(current=>({...current,[key(teamId,hole)]:value}));if(data&&value.openerId){writePending(data.flight.id,[{teamId,hole,openerId:value.openerId,strokes:value.strokes}]);setTimeout(()=>syncLatest.current(),0)}}
   function currentDraft(teamId:string):Draft|undefined{const draft=drafts[key(teamId,hole)];if(draft)return draft;const saved=data?.scores.find(s=>s.team_id===teamId&&s.hole_no===hole);return saved?{openerId:saved.opener_id,strokes:saved.strokes}:undefined}
   function openerCounts(teamId:string){const byHole=new Map<number,string>();data?.scores.filter(s=>s.team_id===teamId).forEach(s=>byHole.set(s.hole_no,s.opener_id));Object.entries(drafts).filter(([draftKey])=>draftKey.startsWith(`${teamId}:`)).forEach(([draftKey,draft])=>{if(draft.openerId)byHole.set(Number(draftKey.split(":")[1]),draft.openerId)});const counts:Record<string,number>={};byHole.forEach(openerId=>{counts[openerId]=(counts[openerId]||0)+1});return counts}
 
-  async function persist(scores:{teamId:string,hole:number,openerId:string,strokes:number}[],message:string){
-    if(!scores.length)return true;
-    setSaving(true);setMsg("Spremanje rezultata…");
-    const r=await fetch("/api/scoring",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"scores",scores})});
-    setSaving(false);
-    if(r.ok){setData(await r.json());setMsg(message);return true}
-    const error=await r.json().catch(()=>({}));setMsg(error.error==="opener limit reached"?"Igrač već ima četiri početna bacanja. Odaberite drugog igrača.":"Rezultat nije spremljen. Provjerite vezu i pokušajte ponovno.");return false;
+  async function syncPending(message="Rezultati su sinkronizirani.",flightData=data){
+    if(!flightData||syncing.current)return false;const scores=readPending(flightData.flight.id);setPendingCount(scores.length);if(!scores.length)return true;
+    syncing.current=true;setSaving(true);
+    try{const r=await fetch("/api/scoring",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"scores",scores})});if(r.ok){setData(await r.json());clearConfirmed(flightData.flight.id,scores);setOnline(true);setMsg(message);return true}const error=await r.json().catch(()=>({}));setMsg(error.error==="opener limit reached"?"Igrač već ima četiri početna bacanja. Ispravite lokalno spremljeni rezultat.":"Rezultati su sačuvani na uređaju i pokušat će se ponovno poslati.");return false}catch{setOnline(false);setMsg("Nema veze. Rezultati su sigurno spremljeni na ovom uređaju.");return false}finally{syncing.current=false;setSaving(false)}
   }
+  useEffect(()=>{syncLatest.current=()=>{void syncPending()}});
   async function nextHole(){
     const currentHole=hole;
     const complete=(data?.teams||[]).map(team=>({team,draft:currentDraft(team.id)})).filter(x=>x.draft?.openerId).map(x=>({teamId:x.team.id,hole:currentHole,openerId:x.draft!.openerId,strokes:x.draft!.strokes}));
+    if(data&&complete.length)writePending(data.flight.id,complete);
     setHole(currentHole===16?1:currentHole+1);
-    await persist(complete,"Rezultati prethodne staze automatski su spremljeni.");
+    await syncPending("Rezultati prethodne staze automatski su spremljeni.");
   }
 
   if(!data)return <main className="authPage green"><form className="loginCard" onSubmit={login}><Image src="/lagoda-logo.jpg" alt="Lagoda" width={82} height={68}/><span className="eyebrow">ZAPISNIČAR</span><h1>Prijava flighta</h1><p>Unesite šifru koju ste dobili od organizatora.</p><label>Šifra flighta<input value={code} onChange={e=>setCode(e.target.value.toUpperCase())} placeholder="R1-F01-4821" required/></label>{msg&&<div className="notice error">{msg}</div>}<button className="btn">Otvori scorecard</button><Link href="/">← Povratak na leaderboard</Link></form></main>;
 
-  return <main className="scorePage"><header className="scoreNav"><div className="brand light"><Image src="/lagoda-logo.jpg" alt="Lagoda" width={44} height={44}/><span>TEAM <b>SHOWDOWN</b></span></div><div><b>{data.flight.name}</b><span>Runda {data.flight.round_no}</span></div><span className="sync"><Wifi/> {saving?"Spremanje…":"Online"}</span></header><section className="scoreShell"><div className="holeNav"><button onClick={()=>setHole(hole===1?16:hole-1)} aria-label="Prethodna staza"><ChevronLeft/></button><div><span>STAZA</span><b>{hole}</b><small>PAR {data.holes.find(h=>h.number===hole)?.par||3}</small></div><button onClick={nextHole} disabled={saving} aria-label="Sljedeća staza"><ChevronRight/></button></div>{msg&&<div className="notice">{msg}</div>}{data.teams.map(team=><ScoreTeam key={`${team.id}-${hole}`} team={team} current={currentDraft(team.id)} counts={openerCounts(team.id)} saved={data.scores.some(s=>s.team_id===team.id&&s.hole_no===hole)} onChange={value=>updateDraft(team.id,value)}/>) }<div className="scoreFoot"><span>{data.scores.filter(s=>s.hole_no===hole).length}/{data.teams.length} rezultata uneseno</span><button className="btn" disabled={saving} onClick={nextHole}>{saving?"Spremanje…":"Sljedeća staza"} <ChevronRight/></button></div></section></main>;
+  return <main className="scorePage"><header className="scoreNav"><div className="brand light"><Image src="/lagoda-logo.jpg" alt="Lagoda" width={44} height={44}/><span>TEAM <b>SHOWDOWN</b></span></div><div><b>{data.flight.name}</b><span>Runda {data.flight.round_no}</span></div><span className={`sync ${!online||pendingCount?"offline":""}`}>{!online||pendingCount?<WifiOff/>:<Wifi/>} {saving?"Sinkronizacija…":!online?`${pendingCount} lokalno spremljeno`:pendingCount?`${pendingCount} čeka slanje`:"Online"}</span></header><section className="scoreShell"><div className="holeNav"><button onClick={()=>setHole(hole===1?16:hole-1)} aria-label="Prethodna staza"><ChevronLeft/></button><div><span>STAZA</span><b>{hole}</b><small>PAR {data.holes.find(h=>h.number===hole)?.par||3}</small></div><button onClick={nextHole} aria-label="Sljedeća staza"><ChevronRight/></button></div>{msg&&<div className="notice">{msg}</div>}{data.teams.map(team=><ScoreTeam key={`${team.id}-${hole}`} team={team} current={currentDraft(team.id)} counts={openerCounts(team.id)} saved={data.scores.some(s=>s.team_id===team.id&&s.hole_no===hole)} onChange={value=>updateDraft(team.id,value)}/>) }<div className="scoreFoot"><button className="btn" onClick={nextHole}>Sljedeća staza <ChevronRight/></button></div></section></main>;
 }
 
 function ScoreTeam({team,current,counts,saved,onChange}:{team:FlightData["teams"][0],current:Draft|undefined,counts:Record<string,number>,saved:boolean,onChange:(value:Draft)=>void}){
